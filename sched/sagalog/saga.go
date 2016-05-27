@@ -2,34 +2,17 @@ package sagalog
 
 import "github.com/scootdev/scoot/messages"
 
-type SagaMessageType int
-
-const (
-	StartSaga SagaMessageType = iota
-	EndSaga
-	AbortSaga
-	StartTask
-	EndTask
-	StartCompTask
-	EndCompTask
-)
-
-/*
- * Data Structure representation of a entry in the
- * Saga Log
- */
-type SagaMessage struct {
-	sagaId  string
-	msgType SagaMessageType
-	job     messages.Job
-	taskId  string
-}
-
 /*
  * Saga Object which provides all Saga Functionality
+ * Implementations of SagaLog should provide a factory method
+ * which returns a saga based on its implementation.
  */
 type saga struct {
 	log SagaLog
+}
+
+func (s saga) GetSagaState(sagaId string) (SagaState, error) {
+	return s.log.GetSagaState(sagaId)
 }
 
 func (s saga) StartSaga(sagaId string, job messages.Job) error {

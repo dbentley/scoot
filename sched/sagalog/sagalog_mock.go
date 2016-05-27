@@ -29,6 +29,17 @@ func (_m *MockSagaLog) EXPECT() *_MockSagaLogRecorder {
 	return _m.recorder
 }
 
+func (_m *MockSagaLog) GetSagaState(_param0 string) (SagaState, error) {
+	ret := _m.ctrl.Call(_m, "GetSagaState", _param0)
+	ret0, _ := ret[0].(SagaState)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (_mr *_MockSagaLogRecorder) GetSagaState(arg0 interface{}) *gomock.Call {
+	return _mr.mock.ctrl.RecordCall(_mr.mock, "GetSagaState", arg0)
+}
+
 func (_m *MockSagaLog) LogMessage(_param0 SagaMessage) error {
 	ret := _m.ctrl.Call(_m, "LogMessage", _param0)
 	ret0, _ := ret[0].(error)

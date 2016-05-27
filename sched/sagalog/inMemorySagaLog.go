@@ -4,58 +4,74 @@ import "errors"
 import "fmt"
 import "github.com/scootdev/scoot/messages"
 
+/*
+ * In Memory Implementation of a Saga Log, DOES NOT durably persist messages.
+ * This is for local testing purposes.
+ */
 type inMemorySagaLog struct {
-	/*
-	 * In memory dictionary of SagaId to SagaLog Messages
-	 * element 0 is always StartSaga message
-	 * last element is always EndSaga message
-	 */
-	sagas    map[string][]SagaMessage
-	sagaJobs map[string]messages.Job
+	sagas map[string]SagaState
 }
 
+/*
+ * Returns an Instance of a Saga based on an InMemorySagaLog
+ */
 func InMemorySagaFactory() saga {
-
 	inMemLog := inMemorySagaLog{
-		sagas:    make(map[string][]SagaMessage),
-		sagaJobs: make(map[string]messages.Job),
+		sagas: make(map[string]SagaState),
 	}
-
 	return saga{
 		log: &inMemLog,
 	}
 }
 
-//Reuse all of this and just implement LogMessage for different implementations(?)
 func (log *inMemorySagaLog) LogMessage(msg SagaMessage) error {
 	sagaId := msg.sagaId
-	sagaLog, ok := log.sagas[sagaId]
+	sagaState, ok := log.sagas[sagaId]
 
 	if ok {
-		log.sagas[sagaId] = append(sagaLog, msg)
+
+		switch msg.msgType {
+		case StartSaga:
+
+		case EndSaga:
+			sagaState.SagaCompleted = true
+		case AbortSaga:
+			sagaState.SagaAborted = true
+		case StartTask:
+			sagaState.TaskStarted[msg.taskId] = true
+		case EndTask:
+			sagaState.TaskCompleted[msg.taskId] = true
+		case StartCompTask:
+			sagaState.CompTaskStarted[msg.taskId] = true
+		case EndCompTask:
+			sagaState.CompTaskCompleted[msg.taskId] = true
+		}
+
 		return nil
 	} else {
 		return errors.New(fmt.Sprintf("Cannot Log Saga Message %i, Never Started Saga %s", msg.msgType, sagaId))
 	}
 }
 
-/*
- * Log a Start Saga Message to the log.  Returns
- * an error if it fails.
- */
 func (log *inMemorySagaLog) StartSaga(sagaId string, job messages.Job) error {
-	// TODO: Initialize saga log size to hold successful saga number of messages
-	// StartSaga, EndSaga, 2 * numTasks (StartTask & EndTask)
-	logSize := 2 + 2*len(job.Tasks)
-	sagaLog := make([]SagaMessage, logSize, 1)
-	sagaLog[0] = SagaMessage{
-		sagaId:  sagaId,
-		msgType: StartSaga,
+
+	_, ok := log.sagas[sagaId]
+	if ok {
+		return errors.New("Saga Already Exists")
 	}
 
-	log.sagas[sagaId] = sagaLog
-	log.sagaJobs[sagaId] = job
+	sagaState := SagaStateFactory(sagaId, job)
+	log.sagas[sagaId] = sagaState
 	return nil
+}
 
-	//TODO: check if it already exists if true return already exists error
+func (log *inMemorySagaLog) GetSagaState(sagaId string) (SagaState, error) {
+
+	sagaState, ok := log.sagas[sagaId]
+
+	if ok {
+		return sagaState, nil
+	} else {
+		return sagaState, errors.New(fmt.Sprintf("Saga %s Does Not Exist", sagaId))
+	}
 }

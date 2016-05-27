@@ -7,8 +7,6 @@ import "github.com/golang/mock/gomock"
 
 import msg "github.com/scootdev/scoot/messages"
 
-//import mock "./mock"
-
 func TestStartSaga(t *testing.T) {
 
 	id := "testSaga"
@@ -326,5 +324,26 @@ func TestEndCompTaskLogError(t *testing.T) {
 	err := s.EndCompensatingTask(entry.sagaId, entry.taskId)
 	if err == nil {
 		t.Error(fmt.Sprintf("Expected EndCompTask to not return an error when write to SagaLog Fails"))
+	}
+}
+
+func TestGetSagaState(t *testing.T) {
+	job := msg.Job{
+		Id: "test1",
+	}
+
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	sagaLogMock := NewMockSagaLog(mockCtrl)
+	sagaLogMock.EXPECT().GetSagaState("1").Return(SagaStateFactory("1", job), nil)
+
+	s := saga{
+		log: sagaLogMock,
+	}
+
+	_, err := s.GetSagaState("1")
+	if err != nil {
+		t.Error(fmt.Sprintf("Expected GetSagaState to not return an erorr"))
 	}
 }
