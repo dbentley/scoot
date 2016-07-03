@@ -28,6 +28,8 @@ type Conn interface {
 	// A Conn is also a Runner
 	runner.Runner
 
+	SnapshotCreate(fromDir string) (string, error)
+
 	Close() error
 }
 
@@ -120,6 +122,14 @@ func (c *conn) Status(run runner.RunId) (runner.ProcessStatus, error) {
 		return runner.ProcessStatus{}, err
 	}
 	return protocol.ToRunnerStatus(r), nil
+}
+
+func (c *conn) SnapshotCreate(fromDir string) (string, error) {
+	r, err := c.client.SnapshotCreate(context.Background(), &protocol.SnapshotCreateReq{FromDir: fromDir})
+	if err != nil {
+		return "", err
+	}
+	return r.Id, nil
 }
 
 func (c *conn) Close() error {

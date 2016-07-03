@@ -3,19 +3,22 @@ package server
 import (
 	"github.com/scootdev/scoot/local/protocol"
 	"github.com/scootdev/scoot/runner"
+	"github.com/scootdev/scoot/snapshots/filer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"log"
 	"net"
 	"time"
 )
 
 // Create a protocol.LocalScootServer
-func NewServer(runner runner.Runner) (protocol.LocalScootServer, error) {
-	return &Server{runner}, nil
+func NewServer(runner runner.Runner, snapshotter filer.Snapshotter) (protocol.LocalScootServer, error) {
+	return &Server{runner, snapshotter}, nil
 }
 
 type Server struct {
-	runner runner.Runner
+	runner      runner.Runner
+	snapshotter filer.Snapshotter
 }
 
 // TODO(dbentley): how to cancel
@@ -54,4 +57,16 @@ func (s *Server) Status(ctx context.Context, req *protocol.StatusQuery) (*protoc
 	}
 
 	return protocol.FromRunnerStatus(status), nil
+}
+
+func (s *Server) SnapshotCreate(ctx context.Context, req *protocol.SnapshotCreateReq) (*protocol.SnapshotCreateResp, error) {
+	log.Println("server.SnapshotCreate")
+	id, err := s.snapshotter.Snapshot(req.FromDir)
+	if err != nil {
+		return nil, err
+	}
+
+	r := &protocol.SnapshotCreateResp{}
+	r.Id = id
+	return r, nil
 }

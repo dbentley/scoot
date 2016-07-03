@@ -17,6 +17,8 @@ service LocalScoot {
 
   rpc Run(Command) returns (ProcessStatus) {}
   rpc Status(StatusQuery) returns (ProcessStatus) {}
+
+  rpc SnapshotCreate(SnapshotCreateReq) returns (SnapshotCreateResp) {}
 }
 
 message EchoRequest {
@@ -54,4 +56,12 @@ message ProcessStatus {
 
 message StatusQuery {
   string run_id = 1;
+}
+
+message SnapshotCreateReq {
+  string from_dir = 1;
+}
+
+message SnapshotCreateResp {
+  string id = 1;
 }

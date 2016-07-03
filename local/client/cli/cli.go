@@ -33,5 +33,6 @@ func NewCliClient(dialer conn.Dialer) (*CliClient, error) {
 	rootCmd.AddCommand(makeEchoCmd(r))
 	rootCmd.AddCommand(makeRunCmd(r))
 	rootCmd.AddCommand(makeStatusCmd(r))
+	rootCmd.AddCommand(makeSnapshotCmd(r))
 	return r, nil
 }
