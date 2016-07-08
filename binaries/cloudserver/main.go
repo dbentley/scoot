@@ -7,6 +7,9 @@ import (
 	"log"
 )
 
+// Server to serve Scoot Cloud API
+// For now this is the exec API, and so this binary should
+// be mainly the scheduler
 func main() {
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
 	transportFactory := thrift.NewTTransportFactory()
