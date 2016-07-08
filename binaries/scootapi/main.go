@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/apache/thrift/lib/go/thrift"
-	"github.com/scootdev/scoot/scootapi/client"
+	"github.com/scootdev/scoot/cloud/api/client"
 	"log"
 )
 

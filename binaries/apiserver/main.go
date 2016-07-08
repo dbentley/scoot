@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/scootdev/scoot/cloud/api/server"
 	"github.com/scootdev/scoot/sched/queue/memory"
-	"github.com/scootdev/scoot/scootapi/server"
 	"log"
 )
 
