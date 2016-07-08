@@ -2,11 +2,14 @@ package main
 
 import (
 	"github.com/apache/thrift/lib/go/thrift"
+	"github.com/scootdev/scoot/cloud/api/server"
 	"github.com/scootdev/scoot/sched/queue/memory"
-	"github.com/scootdev/scoot/scootapi/server"
 	"log"
 )
 
+// Server to serve Scoot Cloud API
+// For now this is the exec API, and so this binary should
+// be mainly the scheduler
 func main() {
 	protocolFactory := thrift.NewTBinaryProtocolFactoryDefault()
 	transportFactory := thrift.NewTTransportFactory()
