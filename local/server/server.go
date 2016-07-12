@@ -62,6 +62,7 @@ func (s *Server) Status(ctx context.Context, req *protocol.StatusQuery) (*protoc
 func (s *Server) SnapshotCreate(ctx context.Context, req *protocol.SnapshotCreateReq) (*protocol.SnapshotCreateResp, error) {
 	log.Println("server.SnapshotCreate")
 	id, err := s.snapshotter.Snapshot(req.FromDir)
+	log.Printf("server.SnapshotCreate done %q %v", id, err)
 	if err != nil {
 		return nil, err
 	}

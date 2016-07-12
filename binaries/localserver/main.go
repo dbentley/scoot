@@ -17,7 +17,7 @@ var execerType = flag.String("execer_type", "sim", "execer type; os or sim")
 // A Local Scoot server.
 func main() {
 	flag.Parse()
-	scootdir, err := protocol.LocateScootDir()
+	scootDir, err := protocol.LocateScootDir()
 	if err != nil {
 		log.Fatal("Error locating Scoot instance: ", err)
 	}
@@ -43,7 +43,7 @@ func main() {
 		log.Fatal("Cannot create Git Snapshotter: ", err)
 	}
 
-	server, err := server.NewServer(runner, snapshotter)
+	s, err := server.NewServer(runner, snapshotter)
 	if err != nil {
 		log.Fatal("Cannot create Scoot server: ", err)
 	}

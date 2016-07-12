@@ -11,7 +11,7 @@ import (
 // GitSnapshotter snapshots using git repo information. This can make snapshotting easier,
 // because git does snapshotting.
 // (But comes with git's cost, so we do not expect this to perform well enough that
-// we can snapshot on each save.
+// we can snapshot on each save.)
 type GitSnapshotter struct {
 	snaps    *GitRepoSnapshots
 	scootDir string
@@ -31,11 +31,47 @@ func (s *GitSnapshotter) Snapshot(path string) (string, error) {
 
 	c := client{repo: repo, runner: s.runner}
 
+	headId, err := c.RunSha("rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Head Id: %q", headId)
+
 	if err := s.copyIndex(&c); err != nil {
 		return "", err
 	}
 
 	log.Println("Using index file at ", c.indexFile)
+
+	_, err = c.Run("add", "-A")
+	if err != nil {
+		log.Println("Error adding", err)
+		return "", err
+	}
+
+	treeId, err := c.RunSha("write-tree")
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Tree Id: %q", treeId)
+
+	commitId, err := c.RunSha("commit-tree", "-p", headId, "-m", "scoot snapshot", treeId)
+	if err != nil {
+		return "", err
+	}
+
+	log.Printf("Commit Id: %q", commitId)
+
+	tagName := fmt.Sprintf("scoot-snapshot-tag-%v", commitId)
+
+	log.Printf("Tag: %q %v", tagName, tagName)
+
+	out, err := c.Run("tag", tagName, commitId)
+	fmt.Printf("Tagged: %q", out)
+	// call snaps.Fetch
+	// delete tag
 
 	return "", fmt.Errorf("gitsnapshotter.Snapshot not yet implemented")
 }
