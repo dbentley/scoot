@@ -13,6 +13,7 @@ import (
 
 // LocateScootDir locates a Scoot instance.
 func LocateScootDir() (string, error) {
+	// TODO: create the directory if it does not exist
 	homedir := os.Getenv("HOME")
 	if homedir == "" {
 		return "", fmt.Errorf("Cannot find home directory; $HOME unset")
