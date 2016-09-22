@@ -2,9 +2,10 @@ package gitfiler
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
-	"os"
 	"os/exec"
+	"path"
 	"sync"
 
 	"github.com/scootdev/scoot/os/temp"
@@ -26,18 +27,39 @@ type RefRepoGetter interface {
 
 // RefRepoCloningCheckouter checks out by cloning a Ref Repo.
 type RefRepoCloningCheckouter struct {
-	getter RefRepoGetter
-	tmp    *temp.TempDir
+	getter    RefRepoGetter
+	clonesDir *temp.TempDir
 
-	repo *repo.Repository
-	mu   sync.Mutex
+	ref  *repo.Repository
+	busy []*repo.Repository
+	free []*repo.Repository
+
+	mu sync.Mutex
 }
 
 func NewRefRepoCloningCheckouter(getter RefRepoGetter, tmp *temp.TempDir) *RefRepoCloningCheckouter {
-	return &RefRepoCloningCheckouter{
-		getter: getter,
-		tmp:    tmp,
-		repo:   nil,
+	r := &RefRepoCloningCheckouter{
+		getter:    getter,
+		clonesDir: tmp,
+		ref:       nil,
+	}
+
+	r.findClones()
+	return r
+}
+
+func (c *RefRepoCloningCheckouter) findClones() {
+	fis, err := ioutil.ReadDir(c.clonesDir.Dir)
+	if err != nil {
+		return
+	}
+
+	for _, fi := range fis {
+		clone, err := repo.NewRepository(path.Join(c.clonesDir.Dir, fi.Name()))
+		if err != nil {
+			continue
+		}
+		c.free = append(c.free, clone)
 	}
 }
 
@@ -46,44 +68,42 @@ func NewRefRepoCloningCheckouter(getter RefRepoGetter, tmp *temp.TempDir) *RefRe
 func (c *RefRepoCloningCheckouter) Checkout(id string) (snapshot.Checkout, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.repo == nil {
-		repository, err := c.getter.Get()
+	if c.ref == nil {
+		ref, err := c.getter.Get()
 		if err != nil {
 			return nil, fmt.Errorf("gitfiler.RefRepoCloningCheckouter.clone: error getting: %v", err)
 		}
-		c.repo = repository
+		c.ref = ref
 	}
 
-	clone, err := c.clone()
-	if err != nil {
-		return nil, err
-	}
-
-	// Make sure we clean up if we error
-	needToClean := true
-	defer func() {
-		if needToClean {
-			err := os.RemoveAll(clone.Dir())
-			log.Println("gitfiler.RefRepoCloningCheckouter.Checkout: had to clean in Checkout", err)
+	if len(c.free) == 0 {
+		clone, err := c.clone()
+		if err != nil {
+			return nil, err
 		}
-	}()
+		c.free = []*repo.Repository{clone}
+	}
+
+	clone := c.free[0]
 
 	if err := clone.Checkout(id); err != nil {
 		return nil, fmt.Errorf("gitfiler.RefRepoCloningCheckouter.Checkout: could not git checkout: %v", err)
 	}
 
+	// move c.free[0] to the end of c.busy
+	c.busy, c.free = append(c.busy, c.free[0]), c.free[1:]
+
 	log.Println("gitfiler.RefRepoCloningCheckouter.Checkout done: ", clone.Dir())
-	needToClean = false
 	return &RefRepoCloningCheckout{repo: clone, id: id, checkouter: c}, nil
 }
 
 func (c *RefRepoCloningCheckouter) clone() (*repo.Repository, error) {
-	cloneDir, err := c.tmp.TempDir("clone-")
+	cloneDir, err := c.clonesDir.TempDir("clone-")
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.Command("git", "clone", "-n", "--reference", c.repo.Dir(), c.repo.Dir(), cloneDir.Dir)
+	cmd := exec.Command("git", "clone", "-n", "--reference", c.ref.Dir(), c.ref.Dir(), cloneDir.Dir)
 	log.Println("gitfiler.RefRepoCloningCheckouter.clone: Cloning", cmd)
 	err = cmd.Run()
 	if err != nil {
@@ -91,6 +111,18 @@ func (c *RefRepoCloningCheckouter) clone() (*repo.Repository, error) {
 	}
 
 	return repo.NewRepository(cloneDir.Dir)
+}
+
+func (c *RefRepoCloningCheckouter) release(release *repo.Repository) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, r := range c.busy {
+		if r == release {
+			c.busy = append(c.busy[:i], c.busy[i+1:]...)
+		}
+	}
+	c.free = append(c.free, release)
+	return nil
 }
 
 type RefRepoCloningCheckout struct {
@@ -108,5 +140,5 @@ func (c *RefRepoCloningCheckout) ID() string {
 }
 
 func (c *RefRepoCloningCheckout) Release() error {
-	return os.RemoveAll(c.repo.Dir())
+	return c.checkouter.release(c.repo)
 }
