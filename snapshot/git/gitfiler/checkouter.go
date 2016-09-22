@@ -48,6 +48,7 @@ func NewRefRepoCloningCheckouter(getter RefRepoGetter, tmp *temp.TempDir) *RefRe
 	return r
 }
 
+// findClones finds all the valid clones in clonesDir
 func (c *RefRepoCloningCheckouter) findClones() {
 	fis, err := ioutil.ReadDir(c.clonesDir.Dir)
 	if err != nil {
@@ -55,11 +56,9 @@ func (c *RefRepoCloningCheckouter) findClones() {
 	}
 
 	for _, fi := range fis {
-		clone, err := repo.NewRepository(path.Join(c.clonesDir.Dir, fi.Name()))
-		if err != nil {
-			continue
+		if clone, err := repo.NewRepository(path.Join(c.clonesDir.Dir, fi.Name())); err == nil {
+			c.free = append(c.free, clone)
 		}
-		c.free = append(c.free, clone)
 	}
 }
 
@@ -86,7 +85,7 @@ func (c *RefRepoCloningCheckouter) Checkout(id string) (snapshot.Checkout, error
 
 	clone := c.free[0]
 
-	if err := clone.Checkout(id); err != nil {
+	if err := c.checkout(clone, id); err != nil {
 		return nil, fmt.Errorf("gitfiler.RefRepoCloningCheckouter.Checkout: could not git checkout: %v", err)
 	}
 
@@ -111,6 +110,23 @@ func (c *RefRepoCloningCheckouter) clone() (*repo.Repository, error) {
 	}
 
 	return repo.NewRepository(cloneDir.Dir)
+}
+
+func (c *RefRepoCloningCheckouter) checkout(clone *repo.Repository, id string) error {
+	// -d removes directories. -x ignores gitignore and removes everything.
+	// -f is force. -f the second time removes directories even if they're git repos themselves
+	cmds := [][]string{
+		{"clean", "-f", "-f", "-d", "-x"},
+		{"checkout", id},
+	}
+
+	for _, argv := range cmds {
+		if _, err := clone.Run(argv...); err != nil {
+			return err
+		}
+
+	}
+	return nil
 }
 
 func (c *RefRepoCloningCheckouter) release(release *repo.Repository) error {
@@ -140,5 +156,6 @@ func (c *RefRepoCloningCheckout) ID() string {
 }
 
 func (c *RefRepoCloningCheckout) Release() error {
+	c.checkouter.checkout(c.repo, c.id)
 	return c.checkouter.release(c.repo)
 }
