@@ -96,6 +96,7 @@ func (c *RefRepoCloningCheckouter) Checkout(id string) (snapshot.Checkout, error
 	return &RefRepoCloningCheckout{repo: clone, id: id, checkouter: c}, nil
 }
 
+// clone our reference repo into a new clone.
 func (c *RefRepoCloningCheckouter) clone() (*repo.Repository, error) {
 	cloneDir, err := c.clonesDir.TempDir("clone-")
 	if err != nil {
@@ -112,6 +113,7 @@ func (c *RefRepoCloningCheckouter) clone() (*repo.Repository, error) {
 	return repo.NewRepository(cloneDir.Dir)
 }
 
+// checkout clone to be at id.
 func (c *RefRepoCloningCheckouter) checkout(clone *repo.Repository, id string) error {
 	// -d removes directories. -x ignores gitignore and removes everything.
 	// -f is force. -f the second time removes directories even if they're git repos themselves
@@ -129,6 +131,7 @@ func (c *RefRepoCloningCheckouter) checkout(clone *repo.Repository, id string) e
 	return nil
 }
 
+// release releases a repo so it can be used again.
 func (c *RefRepoCloningCheckouter) release(release *repo.Repository) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -156,6 +159,5 @@ func (c *RefRepoCloningCheckout) ID() string {
 }
 
 func (c *RefRepoCloningCheckout) Release() error {
-	c.checkouter.checkout(c.repo, c.id)
 	return c.checkouter.release(c.repo)
 }
