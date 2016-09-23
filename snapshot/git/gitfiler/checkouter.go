@@ -25,16 +25,29 @@ type RefRepoGetter interface {
 	Get() (*repo.Repository, error)
 }
 
+type checkoutRequest struct {
+	id       string
+	resultCh chan checkoutAndError
+}
+
+type checkoutAndError struct {
+	checkout snapshot.Checkout
+	err      error
+}
+
 // RefRepoCloningCheckouter checks out by cloning a Ref Repo.
 type RefRepoCloningCheckouter struct {
+	reqCh  chan checkoutRequest
+	freeCh chan *repo.Repository
+
 	getter    RefRepoGetter
 	clonesDir *temp.TempDir
 
-	ref  *repo.Repository
-	busy []*repo.Repository
-	free []*repo.Repository
+	ref *repo.Repository
+	err error
 
-	mu sync.Mutex
+	free []*repo.Repository
+	reqs []checkoutRequest
 }
 
 func NewRefRepoCloningCheckouter(getter RefRepoGetter, tmp *temp.TempDir) *RefRepoCloningCheckouter {
@@ -44,8 +57,54 @@ func NewRefRepoCloningCheckouter(getter RefRepoGetter, tmp *temp.TempDir) *RefRe
 		ref:       nil,
 	}
 
-	r.findClones()
+	go r.loop()
 	return r
+}
+
+func (c *RefRepoCloningCheckouter) loop() {
+	c.ref, c.err = c.getter.Get()
+
+	c.findClones()
+
+	for {
+		// Get input
+		select {
+		case <-c.doneCh:
+			return
+		case req := <-c.reqCh:
+			c.reqs = append(c.reqs, req)
+		case cloneResult := <-c.freeCh:
+			c.free = append(c.free, cloneResult.repo)
+			if c.err == nil {
+				c.err = cloneResult.err
+			}
+		}
+
+		// Serve requests we can serve now
+		if len(c.free) > 0 && len(c.waiting) > 0 {
+			clone, req := c.free[0], c.waiting[0]
+			c.free, c.waiting = c.free[1:], c.waiting[1:]
+			go c.checkoutAndSend(req, clone)
+		}
+
+		if len(c.free) == 0 {
+			go c.cloneNewRepo()
+		}
+	}
+}
+
+func (c *RefRepoCloningCheckouter) cloneNewRepo() {
+	repo, err := c.clone()
+	c.cloneCh <- clone{repo, err}
+}
+
+func (c *RefRepoCloningCheckouter) checkoutAndSend(req checkoutRequest, clone *repo.Respository) {
+	err := c.checkout(clone, req.id)
+	if err != nil {
+		req.resultCh <- checkoutAndError{nil, err}
+		c.freeCh <- clone
+	}
+	req.resultCh <- checkoutAndError{&RefRepoCloningCheckout{repo: clone, id: req.id, checkouter: c}, nil}
 }
 
 // findClones finds all the valid clones in clonesDir
@@ -62,37 +121,26 @@ func (c *RefRepoCloningCheckouter) findClones() {
 	}
 }
 
+func (c *RefRepoCloningCheckouter) Checkout(id string) (snapshot.Checkout, error) {
+	resultCh := new(chan checkoutAndError)
+	c.reqCh <- checkoutRequest{id, resultCh}
+	result := <-resultCh
+	return result.checkout, result.err
+}
+
 // Checkout checks out id (a raw git sha) into a Checkout.
 // It does this by making a new clone (via reference) and checking out id.
 func (c *RefRepoCloningCheckouter) Checkout(id string) (snapshot.Checkout, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.ref == nil {
-		ref, err := c.getter.Get()
-		if err != nil {
-			return nil, fmt.Errorf("gitfiler.RefRepoCloningCheckouter.clone: error getting: %v", err)
-		}
-		c.ref = ref
+	clone, err := c.clone()
+	if err != nil {
+		return nil, err
 	}
-
-	if len(c.free) == 0 {
-		clone, err := c.clone()
-		if err != nil {
-			return nil, err
-		}
-		c.free = []*repo.Repository{clone}
-	}
-
-	clone := c.free[0]
 
 	if err := c.checkout(clone, id); err != nil {
+		c.freeCh <- clone
 		return nil, fmt.Errorf("gitfiler.RefRepoCloningCheckouter.Checkout: could not git checkout: %v", err)
 	}
 
-	// move c.free[0] to the end of c.busy
-	c.busy, c.free = append(c.busy, c.free[0]), c.free[1:]
-
-	log.Println("gitfiler.RefRepoCloningCheckouter.Checkout done: ", clone.Dir())
 	return &RefRepoCloningCheckout{repo: clone, id: id, checkouter: c}, nil
 }
 
@@ -133,14 +181,7 @@ func (c *RefRepoCloningCheckouter) checkout(clone *repo.Repository, id string) e
 
 // release releases a repo so it can be used again.
 func (c *RefRepoCloningCheckouter) release(release *repo.Repository) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for i, r := range c.busy {
-		if r == release {
-			c.busy = append(c.busy[:i], c.busy[i+1:]...)
-		}
-	}
-	c.free = append(c.free, release)
+	c.reqCh <- freeRepo{release}
 	return nil
 }
 
