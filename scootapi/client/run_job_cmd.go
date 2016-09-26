@@ -62,6 +62,7 @@ func (c *runJobCmd) run(cl *Client, cmd *cobra.Command, args []string) error {
 		}
 		thrifthelpers.JsonDeserialize(jobDef, asBytes)
 	}
+
 	jobId, err := client.RunJob(jobDef)
 	if err != nil {
 		switch err := err.(type) {
@@ -72,8 +73,8 @@ func (c *runJobCmd) run(cl *Client, cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	log.Println(fmt.Printf("JobID:%s\n", jobId))
-	fmt.Println(fmt.Printf("JobID:%s\n", jobId)) // this did not show up
+	log.Printf("Running as %v", jobId)
+	fmt.Printf("%s\n", jobId)
 
 	return nil
 }
