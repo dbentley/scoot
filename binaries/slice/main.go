@@ -3,20 +3,19 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 
-	"github.com/ChimeraCoder/gitgo"
+	"github.com/scootdev/scoot/snapshot/git/repo"
 )
 
 func main() {
-	expr := BlobExpr{sha: gitgo.SHA("03039c18b52661b04ecc5d381140222914525a7f")}
-	dir, err := os.Open(".")
+	expr := TreeExpr{blobs: false, trees: true}
+
+	r, err := repo.NewRepository(".")
 	if err != nil {
 		log.Fatal(err)
 	}
-	r := &gitgo.Repository{Basedir: *dir}
 
-	ch := Eval(expr, r)
+	ch := Eval(expr, r, "f3756251c62f28a89e56bc3cc0df4a4002f693d1")
 
 	for sAe := range ch {
 		sha, err := sAe.sha, sAe.err
