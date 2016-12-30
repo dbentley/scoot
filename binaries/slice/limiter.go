@@ -1,9 +1,5 @@
 package main
 
-import (
-	"log"
-)
-
 func leaseOnCh(leaseCh chan struct{}, releaseCh chan struct{}) {
 	avail := 100
 	for {
@@ -14,12 +10,11 @@ func leaseOnCh(leaseCh chan struct{}, releaseCh chan struct{}) {
 		select {
 		case _, ok := <-releaseCh:
 			if !ok {
+				close(leaseCh)
 				return
 			}
-			log.Println("Release", avail)
 			avail++
 		case outCh <- struct{}{}:
-			log.Println("Lease", avail)
 			avail--
 		}
 	}

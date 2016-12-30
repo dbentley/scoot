@@ -12,26 +12,33 @@ func (e BlobExpr) Covers(o BlobExpr) bool {
 }
 
 type TreeExpr struct {
-	trees bool
-	blobs bool
+	Trees bool
+	Blobs bool
 }
 
 func (e TreeExpr) Covers(o TreeExpr) bool {
-	return (e.trees || !o.trees) && (e.blobs || !o.blobs)
+	return (e.Trees || !o.Trees) && (e.Blobs || !o.Blobs)
 }
 
 type CommitExpr struct {
-	tree    TreeExpr
-	history int
+	Tree    TreeExpr
+	History int
 }
 
 func (e CommitExpr) Covers(o CommitExpr) bool {
-	if o.history == -1 && e.history != -1 {
+	if o.History == -1 && e.History != -1 {
 		return false
 	}
-	if e.history < o.history {
+	if e.History < o.History {
 		return false
 	}
 
-	return e.tree.Covers(o.tree)
+	return e.Tree.Covers(o.Tree)
+}
+
+type EvalSpec struct {
+	SHA    string
+	Blob   *BlobExpr
+	Tree   *TreeExpr
+	Commit *CommitExpr
 }

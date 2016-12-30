@@ -1,10 +1,7 @@
 package repo
 
 import (
-	"bytes"
 	"fmt"
-
-	"encoding/hex"
 )
 
 type Commit struct {
@@ -35,26 +32,12 @@ type TreeEnt struct {
 }
 
 var (
-	exec_blob_mode    = []byte("100755")
-	noexec_blob_mode  = []byte("100644")
-	symlink_blob_mode = []byte("120000")
-	tree_mode         = []byte("040000")
+	ModeBlobExec = []byte("100755")
+	ModeBlob     = []byte("100644")
+	ModeSymlink  = []byte("120000")
+	ModeTree     = []byte("040000")
+	ModeCommit   = []byte("160000")
 )
-
-func (e TreeEnt) IsBlob() bool {
-	switch {
-	case bytes.Equal(e.Mode, exec_blob_mode):
-		return true
-	case bytes.Equal(e.Mode, noexec_blob_mode):
-		return true
-	case bytes.Equal(e.Mode, symlink_blob_mode):
-		return true
-	case bytes.Equal(e.Mode, tree_mode):
-		return false
-	default:
-		panic(fmt.Errorf("unrecognized mode %q %q %q", e.Mode, e.Name, hex.EncodeToString(e.Value)))
-	}
-}
 
 func ParseTree(data []byte) (Tree, error) {
 	if len(data) == 0 {

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"sync"
 
+	"github.com/libgit2/git2go"
 	"github.com/scootdev/scoot/snapshot/git/repo"
 )
 
@@ -14,7 +16,8 @@ type shaAndError struct {
 }
 
 type evalState struct {
-	repo      *repo.Repository
+	repo      *git.Repository
+	odb       *git.Odb
 	outCh     chan shaAndError
 	leaseCh   chan struct{}
 	releaseCh chan struct{}
@@ -42,8 +45,8 @@ func (s *evalState) visitTree(sha string, e TreeExpr) bool {
 	if prev.Covers(e) {
 		return true
 	}
-	prev.trees = prev.trees || e.trees
-	prev.blobs = prev.trees || e.blobs
+	prev.Trees = prev.Trees || e.Trees
+	prev.Blobs = prev.Trees || e.Blobs
 	s.seenTrees[sha] = prev
 	return false
 }
@@ -51,8 +54,8 @@ func (s *evalState) visitTree(sha string, e TreeExpr) bool {
 func (s *evalState) visitCommit(sha string, e CommitExpr) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prev, _ := s.seenCommits[sha]
-	if prev.Covers(e) {
+	prev, ok := s.seenCommits[sha]
+	if ok && prev.Covers(e) {
 		return true
 	}
 	// TODO(dbentley): how do we merge these?
@@ -60,9 +63,14 @@ func (s *evalState) visitCommit(sha string, e CommitExpr) bool {
 	return false
 }
 
-func Eval(e Expr, r *repo.Repository, sha string) chan shaAndError {
+func Eval(r *git.Repository, specs []EvalSpec) chan shaAndError {
+	odb, err := r.Odb()
+	if err != nil {
+		panic(err)
+	}
 	s := &evalState{
 		repo:        r,
+		odb:         odb,
 		outCh:       make(chan shaAndError),
 		seenBlobs:   make(map[string]BlobExpr),
 		seenTrees:   make(map[string]TreeExpr),
@@ -71,7 +79,9 @@ func Eval(e Expr, r *repo.Repository, sha string) chan shaAndError {
 		releaseCh:   make(chan struct{}),
 	}
 	go leaseOnCh(s.leaseCh, s.releaseCh)
-	s.Eval(e, sha)
+	for _, spec := range specs {
+		s.Eval(spec.Expr(), spec.SHA)
+	}
 	go s.wait()
 	return s.outCh
 }
@@ -92,6 +102,8 @@ func (s *evalState) eval(e Expr, sha string) {
 		s.evalBlob(e, sha)
 	case TreeExpr:
 		s.evalTree(e, sha)
+	case CommitExpr:
+		s.evalCommit(e, sha)
 	default:
 		panic(fmt.Errorf("unknown type %T %v", e, e))
 	}
@@ -120,18 +132,27 @@ func (s *evalState) evalTree(e TreeExpr, sha string) {
 	}
 
 	for _, dirent := range dirents {
-		if dirent.IsBlob() {
-			if e.blobs {
+		switch {
+		case bytes.Equal(dirent.Mode, repo.ModeBlobExec):
+			fallthrough
+		case bytes.Equal(dirent.Mode, repo.ModeBlob):
+			fallthrough
+		case bytes.Equal(dirent.Mode, repo.ModeSymlink):
+			if e.Blobs {
 				s.Eval(BlobExpr{}, hex.EncodeToString(dirent.Value))
 			}
-		} else {
-			if e.trees {
+		case bytes.Equal(dirent.Mode, repo.ModeTree):
+			if e.Trees {
 				s.Eval(e, hex.EncodeToString(dirent.Value))
 			}
+		case bytes.Equal(dirent.Mode, repo.ModeCommit):
+			continue
+		default:
+			panic(fmt.Errorf("unrecognized mode %q %q %q", dirent.Mode, dirent.Name, hex.EncodeToString(dirent.Value)))
 		}
 	}
 
-	if e.trees {
+	if e.Trees {
 		s.Eval(BlobExpr{}, sha)
 	}
 }
@@ -147,12 +168,15 @@ func (s *evalState) evalCommit(e CommitExpr, sha string) {
 		return
 	}
 
-	s.Eval(e.tree, commit.Tree)
+	s.Eval(e.Tree, commit.Tree)
+	s.Eval(BlobExpr{}, sha)
 
-	if e.history > 0 {
+	if e.History != 0 {
+		e2 := e
+		if e.History != -1 {
+			e2.History--
+		}
 		for _, sha := range commit.Parents {
-			e2 := e
-			e2.history--
 			s.Eval(e2, sha)
 		}
 	}
@@ -161,7 +185,7 @@ func (s *evalState) evalCommit(e CommitExpr, sha string) {
 func (s *evalState) wait() {
 	s.wg.Wait()
 	close(s.outCh)
-	close(s.leaseCh)
+	close(s.releaseCh)
 }
 
 func (s *evalState) emitErr(err error) {
@@ -173,20 +197,81 @@ func (s *evalState) emitSha(sha string) {
 }
 
 func (s *evalState) ShaExists(sha string) error {
-	_, err := s.repo.Run("rev-parse", "--verify", sha+"^{object}")
-	return err
+	oid, err := git.NewOid(sha)
+	if err != nil {
+		return err
+	}
+	if !s.odb.Exists(oid) {
+		return fmt.Errorf("no such object: %q", sha)
+	}
+	return nil
 }
 
 func (s *evalState) LsTree(sha string) (repo.Tree, error) {
-	contents, err := s.repo.Run("cat-file", "tree", sha)
+	oid, err := git.NewOid(sha)
 	if err != nil {
-		return nil, err
+		return repo.Tree{}, err
 	}
-
-	return repo.ParseTree([]byte(contents))
-
+	obj, err := s.repo.Lookup(oid)
+	if err != nil {
+		return repo.Tree{}, err
+	}
+	defer obj.Free()
+	tree, err := obj.AsTree()
+	if err != nil {
+		return repo.Tree{}, err
+	}
+	defer tree.Free()
+	n := tree.EntryCount()
+	result := make([]repo.TreeEnt, n)
+	for i := uint64(0); i < n; i++ {
+		ent := tree.EntryByIndex(i)
+		r := repo.TreeEnt{}
+		switch ent.Filemode {
+		case git.FilemodeTree:
+			r.Mode = repo.ModeTree
+		case git.FilemodeBlob:
+			r.Mode = repo.ModeBlob
+		case git.FilemodeBlobExecutable:
+			r.Mode = repo.ModeBlobExec
+		case git.FilemodeLink:
+			r.Mode = repo.ModeSymlink
+		case git.FilemodeCommit:
+			r.Mode = repo.ModeCommit
+		default:
+			panic(fmt.Errorf("unknown mode %v %v %v", ent.Filemode, ent.Name, sha))
+		}
+		r.Name = []byte(ent.Name)
+		bs := make([]byte, 20)
+		for j, b := range [20]byte(*ent.Id) {
+			bs[j] = b
+		}
+		r.Value = bs
+		result[i] = r
+	}
+	return repo.Tree(result), nil
 }
 
 func (s *evalState) LsCommit(sha string) (repo.Commit, error) {
-	return repo.Commit{}, fmt.Errorf("not yet implemented")
+	oid, err := git.NewOid(sha)
+	if err != nil {
+		return repo.Commit{}, err
+	}
+	obj, err := s.repo.Lookup(oid)
+	if err != nil {
+		return repo.Commit{}, err
+	}
+	defer obj.Free()
+	commit, err := obj.AsCommit()
+	if err != nil {
+		return repo.Commit{}, err
+	}
+	defer commit.Free()
+
+	result := repo.Commit{}
+	result.Tree = commit.TreeId().String()
+	for i := uint(0); i < commit.ParentCount(); i++ {
+		result.Parents = append(result.Parents, commit.ParentId(i).String())
+	}
+	return result, nil
 }

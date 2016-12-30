@@ -1,43 +1,30 @@
 package main
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
-	"text/scanner"
-	// "github.com/ChimeraCoder/gitgo"
 )
 
-type Spec interface{}
-
-type BlobSpec struct {
+func (s EvalSpec) Expr() Expr {
+	if s.Commit != nil {
+		return *s.Commit
+	}
+	if s.Tree != nil {
+		return *s.Tree
+	}
+	if s.Blob != nil {
+		return *s.Blob
+	}
+	panic(fmt.Errorf("unset spec"))
 }
-
-type TreeSpec struct {
-	subtrees bool
-	subblobs bool
-}
-
-// type CommitSpec struct {
-// 	tree      TreeSpec
-// 	ancestors AncestorsSpec
-// }
-
-// type AncestorsSpec struct {
-// 	commit CommitSpec
-// }
-
-// type AncestorsVal struct {
-// 	num int
-// 	AncestorsSpec
-// }
 
 // Spec can be recursive
 // Val isn't
-func Parse(specText string) (Spec, error) {
-	rdr := bytes.NewBufferString(specText)
-	var s scanner.Scanner
-	s.Mode = scanner.ScanIdents | scanner.ScanStrings | scanner.SkipComments
-	s.Init(rdr)
-
-	return nil, fmt.Errorf("not yet implemented")
+func Parse(specText string) (EvalSpec, error) {
+	var spec EvalSpec
+	err := json.Unmarshal([]byte(specText), &spec)
+	if (spec.Commit == nil && spec.Tree == nil && spec.Blob == nil) || spec.SHA == "" {
+		return spec, fmt.Errorf("could not parse spec from %q", specText)
+	}
+	return spec, err
 }

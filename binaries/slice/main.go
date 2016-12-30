@@ -3,19 +3,31 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
-	"github.com/scootdev/scoot/snapshot/git/repo"
+	"github.com/libgit2/git2go"
 )
 
 func main() {
-	expr := TreeExpr{blobs: false, trees: true}
+	if len(os.Args) < 2 {
+		log.Fatal("Must supply an Eval spec")
+	}
 
-	r, err := repo.NewRepository(".")
+	var specs []EvalSpec
+	for _, arg := range os.Args[1:] {
+		spec, err := Parse(arg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		specs = append(specs, spec)
+	}
+
+	r, err := git.OpenRepository("/Users/dbentley/workspace/source")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ch := Eval(expr, r, "f3756251c62f28a89e56bc3cc0df4a4002f693d1")
+	ch := Eval(r, specs)
 
 	for sAe := range ch {
 		sha, err := sAe.sha, sAe.err
