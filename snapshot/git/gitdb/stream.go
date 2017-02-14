@@ -92,3 +92,16 @@ func (b *streamBackend) updateStream(name string, db *DB) error {
 	_, err := db.dataRepo.Run("fetch", b.cfg.Remote)
 	return err
 }
+
+func (b *streamBackend) getHead(name string, db *DB) (snapshot, error) {
+	if err := b.updateStream(name, db); err != nil {
+		return nil, err
+	}
+
+	sha, err := db.dataRepo.RunSha("rev-parse", b.cfg.RefSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	return &streamSnapshot{sha: sha, kind: kindGitCommitSnapshot, streamName: name}, nil
+}

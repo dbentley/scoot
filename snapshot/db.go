@@ -22,6 +22,8 @@ type Creator interface {
 	// commitish may be any string that identifies a commit
 	// Creates a GitCommitSnapshot that mirrors the ingested commit.
 	IngestGitCommit(ingestRepo *repo.Repository, commitish string) (ID, error)
+
+	Merge(head ID, proposal ID) (ID, error)
 }
 
 // Reader allows reading data from existing Snapshots

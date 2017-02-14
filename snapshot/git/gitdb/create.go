@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	snap "github.com/scootdev/scoot/snapshot"
 	"github.com/scootdev/scoot/snapshot/git/repo"
 )
 
@@ -60,6 +61,10 @@ func (db *DB) ingestGitCommit(ingestRepo *repo.Repository, commitish string) (sn
 	}
 
 	return &localSnapshot{sha: sha, kind: kindGitCommitSnapshot}, nil
+}
+
+func (db *DB) Merge(head snap.ID, proposal snap.ID) (snap.ID, error) {
+	return "", fmt.Errorf("not yet implemented")
 }
 
 func (db *DB) shaPresent(sha string) error {

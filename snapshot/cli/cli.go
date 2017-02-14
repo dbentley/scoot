@@ -36,11 +36,16 @@ package cli
 //
 // dbCommand.run() does the work of calling a function on the SnapshotDB
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"log"
+	"net/http"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/scootdev/scoot/os/temp"
 	"github.com/scootdev/scoot/snapshot"
 	"github.com/scootdev/scoot/snapshot/git/repo"
 )
@@ -79,6 +84,8 @@ func MakeDBCLI(injector DBInjector) *cobra.Command {
 
 	add(&ingestGitCommitCommand{}, createCobraCmd)
 	add(&ingestDirCommand{}, createCobraCmd)
+	add(&mergeLoopCommand{}, createCobraCmd)
+	add(&mergeTestCommand{}, createCobraCmd)
 
 	readCobraCmd := &cobra.Command{
 		Use:   "read",
@@ -215,5 +222,204 @@ func (c *catCommand) run(db snapshot.DB, _ *cobra.Command, filenames []string) e
 		}
 		fmt.Printf("%s", data)
 	}
+	return nil
+}
+
+type mergeLoopCommand struct {
+	jenkinsURL string
+}
+
+func (c *mergeLoopCommand) register() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "merge-loop",
+		Short: "try other stuff",
+	}
+	cmd.Flags().StringVar(&c.jenkinsURL, "jenkins_url", "", "base URL for jenkins")
+	return cmd
+}
+
+func (c *mergeLoopCommand) run(db snapshot.DB, _ *cobra.Command, _ []string) error {
+	for {
+		log.Println("merge loop iteration")
+		cmd, err := c.findParams(db)
+		if err != nil {
+			return err
+		}
+		err = cmd.run(db, nil, nil)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+type JenkinsJobInfo struct {
+	Builds []BuildEntry
+}
+
+type BuildEntry struct {
+	URL string
+}
+
+func (c *mergeLoopCommand) findParams(db snapshot.DB) (*mergeTestCommand, error) {
+	jsonURL := c.jenkinsURL + "/api/json"
+	log.Println("fetching", jsonURL)
+	resp, err := http.Get(jsonURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("job info text %s", body)
+
+	var data JenkinsJobInfo
+	err = json.Unmarshal(body, &data)
+	if err != nil {
+		return nil, err
+	}
+	log.Println("job info", data)
+
+	jsonURL = data.Builds[0].URL + "/api/json"
+	resp, err = http.Get(jsonURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	log.Println("f info text", body)
+
+	var j map[string]json.RawMessage
+	err = json.Unmarshal(body, &j)
+	entries := make([]map[string]string, 0)
+	err = json.Unmarshal(j["actions"], &entries)
+	params := make(map[string]string)
+	for _, entry := range entries {
+		params[entry["name"]] = entry["value"]
+	}
+	log.Println("Hmm", params)
+
+	branch := params["branch"]
+	repoURL := params["temp_branch_repo_url"]
+	return &mergeTestCommand{branch: branch, repoURL: repoURL}, nil
+}
+
+type mergeTestCommand struct {
+	repoURL string
+	branch  string
+}
+
+func (c *mergeTestCommand) register() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "merge-test",
+		Short: "try some stuff",
+	}
+	cmd.Flags().StringVar(&c.repoURL, "repo_url", "", "base URL for repo")
+	cmd.Flags().StringVar(&c.branch, "branch", "", "branch to get")
+	return cmd
+}
+
+func (c *mergeTestCommand) run(db snapshot.DB, _ *cobra.Command, _ []string) error {
+	log.Println("Merge test", c.repoURL, c.branch)
+
+	tmp, err := temp.TempDirDefault()
+	if err != nil {
+		return err
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot get working directory: wd")
+	}
+
+	ingestRepo, err := repo.NewRepository(wd)
+	if err != nil {
+		return fmt.Errorf("not a valid repo dir: %v, %v", wd, err)
+	}
+
+	localBranch := fmt.Sprintf("fetched/%s", c.branch)
+	refSpec := fmt.Sprintf("+%s:%s", c.branch, localBranch)
+	if _, err := ingestRepo.Run("fetch", c.repoURL, refSpec); err != nil {
+		return err
+	}
+
+	proposalSHA, err := ingestRepo.RunSha("rev-parse", localBranch)
+	if err != nil {
+		return err
+	}
+
+	if _, err := ingestRepo.Run("fetch"); err != nil {
+		return err
+	}
+
+	masterSHA, err := ingestRepo.RunSha("rev-parse", "origin/master")
+	if err != nil {
+		return err
+	}
+
+	mergeBaseSHA, err := ingestRepo.RunSha("merge-base", proposalSHA, masterSHA)
+	if err != nil {
+		return err
+	}
+
+	f, err := tmp.TempFile("merge-index-")
+	if err != nil {
+		return err
+	}
+
+	fname := f.Name()
+	f.Close()
+	os.Remove(fname)
+
+	log.Println("ba-dum", mergeBaseSHA, masterSHA, proposalSHA)
+	cmd := ingestRepo.Command("read-tree", "-i", "-m", "--aggressive", mergeBaseSHA, masterSHA, proposalSHA)
+	indexEnv := fmt.Sprintf("GIT_INDEX_FILE=%s", fname)
+	cmd.Env = append(os.Environ(), indexEnv)
+	log.Println("env", indexEnv)
+
+	if _, err := ingestRepo.RunCmd(cmd); err != nil {
+		return err
+	}
+
+	cmd = ingestRepo.Command("write-tree")
+	cmd.Env = append(os.Environ(), indexEnv)
+	treeSHA, err := ingestRepo.RunCmdSha(cmd)
+	if err != nil {
+		return err
+	}
+
+	log.Println("merged", treeSHA)
+
+	msg, err := ingestRepo.Run("log", "--format=%B", "-n", "1", proposalSHA)
+	if err != nil {
+		return err
+	}
+
+	name, err := ingestRepo.Run("show", "-s", "--format=%aN", proposalSHA)
+	if err != nil {
+		return err
+	}
+
+	email, err := ingestRepo.Run("show", "-s", "--format=%aE", proposalSHA)
+	if err != nil {
+		return err
+	}
+
+	cmd = ingestRepo.Command("commit-tree", treeSHA, "-p", masterSHA, "-m", msg)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME="+name,
+		"GIT_AUTHOR_EMAIL="+email,
+	)
+
+	created, err := ingestRepo.RunCmdSha(cmd)
+	if err != nil {
+		return err
+	}
+
+	log.Println("Created new one", created)
 	return nil
 }
